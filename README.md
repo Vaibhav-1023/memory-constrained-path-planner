@@ -1,264 +1,242 @@
-# Bare-Metal BFS with Fixed Memory Mapping
+# Robot Navigation System (Embedded C)
 
-A minimal Breadth-First Search (BFS) implementation for a 32-node graph, using explicit memory addresses for all data structures. Designed for low-level, bare-metal environments (such as Ripes or embedded hardware) with strict memory constraints and no standard C library dependencies.
+This repository contains the embedded C code for an autonomous robot designed to navigate a predefined grid-based environment. The system implements a robust Finite State Machine (FSM) for control, leverages Breadth-First Search (BFS) for efficient path planning, and incorporates dynamic obstacle avoidance capabilities.
 
-## Introduction:
-This project demonstrates how to implement BFS for shortest path discovery in a graph, storing all arrays and state variables at fixed memory addresses. This approach is useful for educational purposes, hardware simulation, or environments where linker scripts and dynamic memory are unavailable.
+The primary goal of this project is to demonstrate a memory-efficient and reliable navigation solution for resource-constrained microcontroller environments.
 
-## Installation & Usage
-1. **Clone the repository:**
-2. **Build the project:**
-- Use a RISC-V cross-compiler (e.g., `riscv64-unknown-elf-gcc`). We used [xPack GNU Compiler](https://github.com/xpack-dev-tools/riscv-none-elf-gcc-xpack/releases/tag/v12.3.0-1/) to compile the code using the following compiler flags in terminal.
-  ```
-  riscv64-unknown-elf-gcc -O0 -g -nostartfiles -ffreestanding -o bfs.elf bfs.c
-  ```
-3. **Run in Ripes:**
-- Load `bfs.elf` and inspect memory at the following addresses:
-  - `0x000110E0` : Path array (sequence of node indices)
-  - `0x00011102` : Path length
+## Features
 
-## How it works:
-- **Graph Representation:**  
-The graph is stored at `0x00011000` as a 32x4 array, where each node has up to 4 neighbors (or 255 for no connection).
-- **BFS State:**  
-Arrays for visited nodes, parent tracking, and the BFS queue are mapped to fixed memory locations. 
-- **Path Storage:**  
-After BFS, the shortest path from node 8 to node 17 is reconstructed and stored at `0x000110E0`.
-- **No Standard Library:**  
-All memory operations are done manually, with no `memcpy` or standard C library calls.
+* **Grid-Based Navigation:** The robot operates on a static, predefined 32-node grid map. Connections between nodes are cardinal (Up, Right, Down, Left) and defined in the `initial_graph_data` adjacency list.
 
-## Brief working of BFS algorithm:
-- Start at the source node: Mark it as visited and add it to the queue.
-- Process the queue:
-  - Remove the first node from the queue.
-  -   Visit all its unvisited neighbors, mark them as visited, and add them to the end of the queue.
-- Repeat: Continue the process until the queue is empty.
+* **Memory-Efficient Path Planning:** This system is highly optimized for minimal RAM usage. It employs a custom memory map and intelligent data overlapping techniques. The total RAM footprint for all dynamic data structures is meticulously managed to fit **under 256 bytes**. This is achieved by reusing memory blocks for data that is active during different, non-overlapping phases of the program's execution.
 
-## Code Overview:
-- `bfs.c` contains:
-  - Memory-mapped arrays for graph, visited, parent, queue, and path.
-  - Manual graph initialization.
-  - Circular queue for BFS.
-  - Path reconstruction logic.
-  - Stack pointer initialization for bare-metal operation.
+* **Breadth-First Search (BFS):** A standard BFS algorithm is implemented to discover the shortest path (in terms of node count) from a given start node to a target node. It utilizes `visited` and `parent` arrays to track search progress and reconstruct the optimal path.
 
-## Code Walkthrough:
-### 1. Memory Mapping and Constants
-  ```C
-#define NODES 32
-#define DIRS 4
-#define INVALID 255
-#define START 8
-#define TARGET 20
+* **Finite State Machine (FSM) Control:** A robust FSM (`run_robot_fsm`) dictates the robot's high-level behavior. States include initialization, path computation, instruction reading, motor control, alignment, and obstacle handling. This structured approach ensures predictable and manageable robot behavior.
 
-// Fixed memory mapping
-#define ARR_BASE        0x00011000
-#define VISITED_BASE    0x00011080
-#define PARENT_BASE     0x000110A0
-#define QUEUE_BASE      0x000110C0
-#define PATH_BASE       0x000110E0
-#define FRONT_ADDR      0x000110EA
-#define REAR_ADDR       0x000110E9
-#define PATH_LEN_ADDR   0x000110EB
+* **Precise Movement Control:** Dedicated functions (`perform_turn`, `move_forward_one_grid`) translate high-level commands into low-level motor control signals via memory-mapped registers. Turns are precisely executed for 90-degree increments (Right, Left, Around) and forward movement covers one grid unit.
 
-#define arr         ((volatile uint8_t (*)[4])ARR_BASE)
-#define visited     ((volatile uint8_t *)VISITED_BASE)
-#define parent      ((volatile uint8_t *)PARENT_BASE)
-#define queue       ((volatile uint8_t *)QUEUE_BASE)
-#define path        ((volatile uint8_t *)PATH_BASE)
-#define front       (*(volatile uint8_t *)FRONT_ADDR)
-#define rear        (*(volatile uint8_t *)REAR_ADDR)
-#define path_len    (*(volatile uint8_t *)PATH_LEN_ADDR)
-  ```
-- NODES, DIRS, INVALID: Define the size of the graph (32 nodes), directions per node (4), and the value for an invalid connection (255).
-- START, TARGET: The starting node and the target node for the BFS. We will later use UART communication to get these values from the memory itself.
-- Memory Addresses: Each array and variable is mapped to a specific memory address.
-- Pointer Macros: These macros provide convenient access to memory-mapped arrays and variables.
+* **Line Following & Alignment:** The robot uses three IR sensors (`SENSOR_BASE`) to detect and follow lines. The `alignment_ok` and `correct_alignment` functions provide reactive control to keep the robot centered on the track, crucial for accurate node detection.
 
-### 2. Graph Initialization
-  ```C
-void init_graph() {
-    volatile uint8_t *arr_ptr = (volatile uint8_t *)ARR_BASE;
-    // Set all to INVALID first (optional, for safety)
-    for (int i = 0; i < 128; i++) arr_ptr[i] = INVALID;
-    // Manually initialize the edges
-    arr_ptr[0] = 6; arr_ptr[1] = 1; arr_ptr[2] = 255; arr_ptr[3] = 10;
-    arr_ptr[4] = 2; arr_ptr[5] = 255; arr_ptr[6] = 0; arr_ptr[7] = 11;
-    arr_ptr[8] = 4; arr_ptr[9] = 3; arr_ptr[10] = 5; arr_ptr[11] = 1;
-    arr_ptr[12] = 255; arr_ptr[13] = 255; arr_ptr[14] = 2; arr_ptr[15] = 255;
-    arr_ptr[16] = 255; arr_ptr[17] = 255; arr_ptr[18] = 255; arr_ptr[19] = 2;
-    arr_ptr[20] = 255; arr_ptr[21] = 2; arr_ptr[22] = 255; arr_ptr[23] = 255;
-    arr_ptr[24] = 8; arr_ptr[25] = 7; arr_ptr[26] = 9; arr_ptr[27] = 0;
-    arr_ptr[28] = 255; arr_ptr[29] = 255; arr_ptr[30] = 6; arr_ptr[31] = 255;
-    arr_ptr[32] = 255; arr_ptr[33] = 255; arr_ptr[34] = 255; arr_ptr[35] = 6;
-    arr_ptr[36] = 255; arr_ptr[37] = 6; arr_ptr[38] = 255; arr_ptr[39] = 255;
-    arr_ptr[40] = 0; arr_ptr[41] = 11; arr_ptr[42] = 26; arr_ptr[43] = 24;
-    arr_ptr[44] = 1; arr_ptr[45] = 12; arr_ptr[46] = 10; arr_ptr[47] = 19;
-    arr_ptr[48] = 14; arr_ptr[49] = 255; arr_ptr[50] = 11; arr_ptr[51] = 13;
-    arr_ptr[52] = 12; arr_ptr[53] = 255; arr_ptr[54] = 255; arr_ptr[55] = 255;
-    arr_ptr[56] = 12; arr_ptr[57] = 255; arr_ptr[58] = 15; arr_ptr[59] = 16;
-    arr_ptr[60] = 255; arr_ptr[61] = 14; arr_ptr[62] = 255; arr_ptr[63] = 255;
-    arr_ptr[64] = 17; arr_ptr[65] = 14; arr_ptr[66] = 18; arr_ptr[67] = 255;
-    arr_ptr[68] = 255; arr_ptr[69] = 255; arr_ptr[70] = 255; arr_ptr[71] = 16;
-    arr_ptr[72] = 19; arr_ptr[73] = 16; arr_ptr[74] = 21; arr_ptr[75] = 255;
-    arr_ptr[76] = 11; arr_ptr[77] = 255; arr_ptr[78] = 20; arr_ptr[79] = 18;
-    arr_ptr[80] = 255; arr_ptr[81] = 19; arr_ptr[82] = 255; arr_ptr[83] = 255;
-    arr_ptr[84] = 22; arr_ptr[85] = 18; arr_ptr[86] = 23; arr_ptr[87] = 255;
-    arr_ptr[88] = 255; arr_ptr[89] = 255; arr_ptr[90] = 255; arr_ptr[91] = 21;
-    arr_ptr[92] = 24; arr_ptr[93] = 21; arr_ptr[94] = 30; arr_ptr[95] = 255;
-    arr_ptr[96] = 10; arr_ptr[97] = 25; arr_ptr[98] = 255; arr_ptr[99] = 23;
-    arr_ptr[100] = 255; arr_ptr[101] = 255; arr_ptr[102] = 24; arr_ptr[103] = 255;
-    arr_ptr[104] = 255; arr_ptr[105] = 10; arr_ptr[106] = 28; arr_ptr[107] = 27;
-    arr_ptr[108] = 26; arr_ptr[109] = 255; arr_ptr[110] = 255; arr_ptr[111] = 255;
-    arr_ptr[112] = 26; arr_ptr[113] = 29; arr_ptr[114] = 255; arr_ptr[115] = 30;
-    arr_ptr[116] = 255; arr_ptr[117] = 255; arr_ptr[118] = 28; arr_ptr[119] = 255;
-    arr_ptr[120] = 31; arr_ptr[121] = 23; arr_ptr[122] = 28; arr_ptr[123] = 255;
-    arr_ptr[124] = 255; arr_ptr[125] = 255; arr_ptr[126] = 255; arr_ptr[127] = 30;
-}
-```
-- Initialization: The graph is manually initialized by writing to the memory-mapped array at ARR_BASE.
-- Safety: All entries are first set to INVALID (255) to ensure no accidental valid connections.
-- Manual Assignment: Each edge is set explicitly, ensuring the graph structure matches the intended layout.
+* **Dynamic Obstacle Avoidance:**
 
-### 3. Queue Operations
-```C
-void enqueue(uint8_t node) {
-    if (((rear + 1) % NODES) == front) return; // Queue full
-    queue[rear] = node;
-    rear = (rear + 1) % NODES;
-}
+    * **Real-time Detection:** An additional IR sensor (`OBSTACLE_SENSOR_BASE`) continuously monitors for objects in the robot's immediate path.
 
-uint8_t dequeue() {
-    if (front == rear) return INVALID;
-    uint8_t node = queue[front];
-    front = (front + 1) % NODES;
-    return node;
-}
-```
-- Circular Queue: The queue is implemented as a circular buffer to efficiently manage the BFS frontier.
-- Enqueue: Adds a node to the end of the queue, checking for overflow.
-- Dequeue: Removes and returns the node at the front of the queue, checking for underflow.
-- Front and Rear: The **front** pointer points to the next node to be removed (dequeued) from the queue while **rear** points to the next available slot to insert (enqueue) a new node.
+    * **Immediate Reaction:** Upon obstacle detection, the robot immediately stops.
 
-### 4. BFS Implementation
-#### - Initialization
-```c
-for (int i = 0; i < NODES; i++) {
-    visited[i] = 0;          // Mark all nodes as unvisited
-    parent[i] = INVALID;     // Reset parent pointers
-}
-front = rear = 0;            // Clear queue
-```
-  - Prepares tracking arrays and queue for a new BFS run.
+    * **Intelligent Backtracking:** The robot automatically backs up one full grid unit to clear the obstacle.
 
-#### - Start Node Setup
+    * **Adaptive Re-planning:** The system identifies the specific edge that was blocked and dynamically re-runs the BFS algorithm. The BFS is modified to *exclude* this blocked edge from its search, forcing the calculation of an alternative optimal path.
 
-```c
-enqueue(START);             // Add start node to queue
-visited[START] = 1;         // Mark start node as visited
-parent[START] = INVALID;    // Start node has no parent
-```
-#### - Core Loop: Process Nodes
+    * **Seamless Resumption:** The robot then resumes navigation on the newly computed optimal path, effectively bypassing the obstacle.
 
-```c
-while (front != rear) {
-    uint8_t current = dequeue();  // Get next node to process
-```
-  - Loop continues until the queue is empty.
+* **Conceptual Path Re-orientation:** A unique logic within the `encode_path_to_instructions` function intelligently adjusts the robot's internal "belief" about its orientation at certain nodes (e.g., where the physical track implies a bend not captured by simple grid connections). This re-orientation is purely conceptual (updates an internal variable) and **does not encode an additional physical turn command**, ensuring subsequent turns are calculated correctly from the robot's desired conceptual facing.
 
-#### - Explore Neighbors
+## Crucial Code Logic Explained
 
-```c
-for (uint8_t dir = 0; dir < DIRS; dir++) {
-    uint8_t next = arr[current][dir];
-    if (next != INVALID && next < NODES && !visited[next]) {
-        visited[next] = 1;      // Mark neighbor as visited
-        parent[next] = current; // Record discovery path
-        enqueue(next);          // Add neighbor to queue
-    }
-}
-```
-- Checks all 4 directions of the current node.
-- Valid neighbors (not INVALID, in range, unvisited) are:
-  - Marked as visited
-  - Linked to current node via parent[]
-  - Added to the queue for future processing
+### Direction Encoding
 
-- Termination
-  - Loop ends when all reachable nodes are processed.
-  - No early exit – continues even after finding target to ensure full traversal.
+The system uses a consistent numerical mapping for cardinal directions, fundamental for all pathfinding and movement calculations:
 
-### 5. Storing Path
-```C
-void store_path(uint8_t target_node) {
-    if (parent[target_node] == INVALID && target_node != START) {
-        path_len = 0;
-        return;
-    }
-    uint8_t temp_path[NODES];
-    uint8_t len = 0;
-    uint8_t current = target_node;
-    while (current != INVALID && len < NODES) {
-        temp_path[len] = current;
-        len++;
-        current = parent[current];
-    }
-    // Check if path exists (should reach start node)
-    if (len == 0 || temp_path[len-1] != START) {
-        path_len = 0;
-        return;
-    }
-    path_len = len;
-    for (uint8_t i = 0; i < len; i++) {
-        path[i] = temp_path[len - 1 - i];
-    }
-}
-```
-- Check for Valid Path
-  - Input: The function takes the target node (the node you want to reach).
-  - Validation: It first checks if the target node is unreachable (i.e., its parent is INVALID and it is not the start node). If so, it sets the path length to 0 and exits.
+* `DIR_UP = 0` (North)
 
-- Backtracking the Path
-  - Initialize: A temporary array (temp_path) is used to store the nodes as you backtrack from the target to the start.
-  - Loop: Starting from the target node, the function repeatedly looks up the parent of the current node and adds it to the temporary array. This continues until either the start node is reached or the maximum number of nodes is exceeded.
+* `DIR_RIGHT = 1` (East)
 
-- Check Path Completeness
-  - Validation: After backtracking, the function checks if the start node was actually reached (i.e., if the path is valid and complete). If not, it sets the path length to 0 and exits.
+* `DIR_DOWN = 2` (South)
 
-- Reverse and Store the Path
-  - Since backtracking gives the path in reverse order (from target to start), the function reverses the nodes in the temporary array.
-  - The reversed path is then copied into the memory-mapped path array, and its length is saved at the designated memory address
+* `DIR_LEFT = 3` (West)
 
-### 6. Other Components:
-We can initialize the _start as follows:
-```C
-void _start() {
-    asm volatile("li sp, 0x12000");
-    main();
-    while(1);
-}
-```
-- In standard C programs, execution typically begins with the main function. However, in bare-metal or embedded systems, the program needs a specific starting point that the hardware or simulator knows to execute first. The `_start` function is traditionally used as the entry point in such environemnts.
-- The line asm volatile `("li sp, 0x12000");` sets the stack pointer to a safe memory location, ensuring that function calls, local variables, and interrupts (if any) work correctly.
+This sequential numerical assignment is crucial for the `calc_command` function, which relies on modulo arithmetic to determine relative turns. For instance, a turn from `DIR_UP` (0) to `DIR_RIGHT` (1) is a `+1` change, while a turn from `DIR_UP` (0) to `DIR_LEFT` (3) is a `+3` change (or `-1` equivalent), correctly representing 90-degree clockwise and 90-degree counter-clockwise rotations, respectively.
 
-To use all the functions, we simply use all of them in int main():
-```C
-int main() {
-    init_graph();
-    bfs(START);
-    store_path(TARGET);
-    return 0;
-}
-```
+### Graph Encoding
 
-## Future Developments
-We are currently focusing on improving the code to make a robot which can navigate the grid. For that, we will need to do the following:
-1. Implement memory-mapped UART communication to communicate start and end points to the processor.
-2. Simulate IR sensors which detect if a robot is following the black line in the graph.
-3. Modify this code to be more memory friendly by reusing space used by unnecessary arrays and variables.
+The grid map is encoded as an **adjacency list** using a 2D array, `initial_graph_data[NODES][DIRS]`.
 
-We will commit any changes done to both this README file and to the C file which contains the code.
+* Each row `initial_graph_data[node_ID]` represents a specific node in the grid.
 
-## Authors:
-- Vaibhav Sharma (@Vaibhav-1023)
-- Avni Jharware (@bytebunny2005)
+* The columns within each row correspond to the four cardinal directions (`UP`, `RIGHT`, `DOWN`, `LEFT`), as defined by the `DIR_` macros.
+
+* The value at `initial_graph_data[node_ID][direction]` is the ID of the neighboring node in that specific direction.
+
+* `INVALID` (255) indicates that there is no connection (no path) from `node_ID` in that particular direction.
+
+This format allows for quick lookup of neighbors and is directly used by the BFS algorithm.
+
+### BFS Algorithm Explained
+
+The Breadth-First Search (BFS) algorithm (`bfs` function) is used to find the shortest path between a starting node and all other reachable nodes in the grid.
+
+1.  **Initialization:**
+
+    * The `parent` array is cleared (`INVALID`) to track predecessors.
+
+    * The `visited` bitmask is cleared to mark all nodes as unvisited.
+
+    * The `queue` (implemented as a circular buffer with `front` and `rear` pointers) is initialized empty.
+
+    * The `start_node` is enqueued and marked as visited.
+
+2.  **Exploration:**
+
+    * The algorithm repeatedly dequeues a `current` node.
+
+    * For each of `current`'s neighbors (in all `DIRS`):
+
+        * It checks if the `next` node is valid, within bounds, and unvisited.
+
+        * **Obstacle Avoidance Integration:** Crucially, it checks if the edge from `current` to `next` is currently marked as `blocked_from_node` to `blocked_to_node`. If it is, that neighbor is skipped for the current pathfinding attempt.
+
+        * If the `next` node is valid and not blocked, it's marked as visited, its `parent` is set to `current`, and it's enqueued.
+
+3.  **Path Reconstruction (`store_path`):**
+
+    * After BFS completes, `store_path` reconstructs the path from `target_node` back to `start_node` by following the `parent` links.
+
+    * The path is built in reverse in a `temp_path` array and then copied to the global `path` array in the correct order.
+
+    * `path_len` is set to the number of nodes in this computed path.
+
+### Path Encoding
+
+The `encode_path_to_instructions` function translates the high-level node sequence (from the `path` array) into a series of low-level, 2-bit movement commands (`CMD_FORWARD`, `CMD_RIGHT`, `CMD_LEFT`, `CMD_AROUND`) that the robot's FSM can directly execute. These commands are packed into the `commands` byte array.
+
+1.  **Segment-by-Segment Translation:** The function iterates through each `(curr_node, next_node)` segment of the computed path.
+
+2.  **Turn Command Generation:** For each segment, it calculates the `turn_cmd` required to orient the robot from its `current_robot_orientation` to face `next_node`. This `turn_cmd` is then encoded into the `commands` array.
+
+3.  **Explicit Forward Command:** Immediately after encoding the `turn_cmd`, an explicit `CMD_FORWARD` command is encoded. This ensures that every logical step (turn + move) is represented by two distinct commands in the `commands` array, providing fine-grained control to the FSM.
+
+4.  **Conceptual Re-orientation:** After encoding the commands for a segment, the `current_robot_orientation` (an internal variable used for calculation) is updated to reflect the robot's new physical orientation. Then, a crucial conceptual re-orientation check occurs:
+
+    * It determines the direction the robot *entered* the `next_node` from (i.e., `next_node` back to `curr_node`).
+
+    * It calculates the *opposite* of this entry direction as the `desired_conceptual_orientation`.
+
+    * If the `current_robot_orientation` (its physical orientation after the move) is not equal to this `desired_conceptual_orientation`, the `current_robot_orientation` variable is updated to the `desired` value. **This update is purely internal and does NOT generate an additional physical turn command.** It ensures that the calculation for the *next* path segment's turn command is based on a logically consistent "straight ahead" orientation, especially for paths that might visually appear "curved" on the map.
+
+5.  **`path_len` Update:** The global `path_len` variable is updated to store the total count of these 2-bit commands generated (e.g., 2 commands per segment).
+
+### Object Detection
+
+The dynamic obstacle avoidance system is integrated into the FSM to react to unexpected obstructions on the path.
+
+1.  **Detection Mechanism:** A dedicated obstacle sensor (`OBSTACLE_SENSOR_BASE`) is polled in the `FSM_READ_INSTR` state. If `is_obstacle_detected()` returns true, the robot immediately transitions to `FSM_OBSTACLE_DETECTED`.
+
+2.  **`FSM_OBSTACLE_DETECTED` State:**
+
+    * The robot `stop_robot()` to prevent collision.
+
+    * It identifies the specific edge (`blocked_from_node` to `blocked_to_node`) that was being traversed when the obstacle was detected. This edge is globally marked as blocked.
+
+    * The robot performs a `move_backward_one_grid()` to physically clear the obstacle and return to the last safe node.
+
+    * The `start` node for pathfinding is updated to this `last_safe_node`.
+
+    * The `bfs` algorithm is then re-run. Since `bfs` is modified to skip the `blocked_from_node` to `blocked_to_node` edge, it will find an alternative path if one exists.
+
+    * If a new path is found, it is encoded, the `blocked_from_node` and `blocked_to_node` flags are cleared, and the FSM resumes execution from `FSM_READ_INSTR` with the new path. If no alternative path is found, the robot transitions to `FSM_COMPLETE` (stuck).
+
+## Memory Architecture Overview
+
+The system employs a custom memory-mapped architecture to optimize RAM usage, a critical consideration for embedded systems. All key data structures are strategically placed and, in some cases, **overlay each other**, reusing memory for different phases of operation.
+
+* **RAM Footprint:** The entire program's RAM usage is optimized to fit within **255 bytes**. This is achieved through:
+
+    * **Overlapping `path` and `queue`:** The `path` array (storing the final node sequence after BFS) reuses the memory allocated for the `queue` (used only *during* BFS search). `path` is populated *after* `queue` is no longer actively needed for BFS.
+
+    * **Overlapping `executed_path`/`blocked_nodes` with `visited`/`parent`:** The `executed_path` array (for obstacle avoidance history) and the `blocked_from_node`/`blocked_to_node` variables reuse the memory allocated for the `visited` bitmask and `parent` array. These BFS-specific arrays are only active during path computation and are no longer needed during path execution or obstacle handling.
+
+    * **Minimal `INSTRUCTIONS_SIZE`:** The `commands` array size is precisely calculated to hold only the necessary encoded instructions (2 commands per path segment), rather than a larger, potentially wasteful buffer.
+
+### Memory Usage Breakdown (RAM)
+
+The following table details the RAM allocation for each major data structure and variable:
+
+| Variable/Structure | Base Address (Example) | Size (Bytes) | Purpose                                                                 | Overlaps With (if applicable) |
+| :----------------- | :--------------------- | :----------- | :---------------------------------------------------------------------- | :---------------------------- |
+| `arr`              | `0x00011900`           | 128          | Adjacency list for graph connections (`uint8_t[NODES][DIRS]`)           | None                          |
+| `visited`          | `0x00011980`           | 4            | BFS visited node bitmask (`uint32_t`)                                   | `executed_path_idx`, `blocked_from_node`, `blocked_to_node` |
+| `parent`           | `0x00011984`           | 32           | BFS parent array for path reconstruction (`uint8_t[NODES]`)             | `executed_path`               |
+| `queue`            | `0x000119A4`           | 32           | BFS queue data (`uint8_t[NODES]`)                                       | `path`                        |
+| `path`             | `0x000119A4`           | 32           | Computed node path (`uint8_t[NODES]`)                                   | `queue`                       |
+| `rear`             | `0x000119C4`           | 1            | Queue rear pointer (`uint8_t`)                                          | None                          |
+| `front`            | `0x000119C5`           | 1            | Queue front pointer (`uint8_t`)                                         | None                          |
+| `path_len`         | `0x000119C6`           | 1            | Total number of encoded commands (`uint8_t`)                            | None                          |
+| `current_cmd`      | `0x000119C7`           | 1            | Command currently being processed by FSM (`uint8_t`)                    | None                          |
+| `instr_index`      | `0x000119C8`           | 1            | Index of the next command to read (`uint8_t`)                           | None                          |
+| `robot_orientation`| `0x000119C9`           | 1            | Robot's current physical orientation (`uint8_t`)                        | None                          |
+| `start`            | `0x000119CA`           | 1            | Mission start node ID (`uint8_t`)                                       | None                          |
+| `target`           | `0x000119CB`           | 1            | Mission target node ID (`uint8_t`)                                      | None                          |
+| `commands`         | `0x000119CC`           | 16           | Encoded movement commands (`uint8_t[INSTRUCTIONS_SIZE]`)                | None                          |
+| `executed_path`    | `0x000119DC`           | 32           | History of successfully visited nodes (`uint8_t[NODES]`)                | `parent`                      |
+| `executed_path_idx`| `0x000119FC`           | 1            | Index/count for `executed_path` (`uint8_t`)                             | `visited`                     |
+| `blocked_from_node`| `0x000119FD`           | 1            | Origin node ID of the blocked edge (`uint8_t`)                          | `visited` (partially)         |
+| `blocked_to_node`  | `0x000119FE`           | 1            | Destination node ID of the blocked edge (`uint8_t`)                     | `visited` (partially)         |
+| **Total** |                        | **255** |                                                                         |                               |
+
+*Note: The total RAM usage is calculated from the lowest (`0x00011900`) to the highest (`0x000119FE`) address used, ensuring all allocated space is accounted for, including any implicit padding.*
+
+## How to Use / Simulate
+
+### Prerequisites
+
+* **RISC-V GCC Toolchain:** Required to compile the C code for a RISC-V target.
+
+* **RIPES Simulator:** Recommended for simulating the microcontroller environment, including memory-mapped I/O, sensors, and program execution.
+
+### Compilation
+
+1.  Save the provided C code as a `.c` file (e.g., `robot_navigator.c`).
+
+2.  Compile using your RISC-V GCC toolchain. Example command (adjust as needed for your specific setup):
+
+    ```bash
+    riscv-none-embed-gcc -march=rv32i -mabi=ilp32 -nostdlib -o robot_navigator.elf robot_navigator.c
+    ```
+
+    *(Ensure `-nostdlib` is used as you're providing your own `_start` and not linking against standard libraries.)*
+
+### Running in RIPES
+
+1.  Open the RIPES simulator.
+
+2.  Load the compiled `.elf` file (`robot_navigator.elf`).
+
+3.  **Configure Memory-Mapped I/O:**
+
+    * **Switches:** Set the values for `SWITCHES_BASE1` (`0xF0000000`) and `SWITCHES_BASE2` (`0xF0000004`) to your desired start and target node IDs.
+
+    * **IR Sensors:** Simulate line sensor input at `SENSOR_BASE` (`0xF0000020`) using bitmasks (e.g., `0b111` for all on line).
+
+    * **Obstacle Sensor:** Simulate obstacle detection at `OBSTACLE_SENSOR_BASE` (`0xF0000030`) by setting/clearing bit 0 (e.g., `0b01` for detected, `0b00` for clear).
+
+4.  **Open Memory Viewer:** Monitor the RAM region starting from `0x00011900` to `0x000119FE` to observe variable states.
+
+5.  **Set Breakpoints:** Place breakpoints at key FSM states (e.g., `FSM_PATH_FOUND`, `FSM_REORIENT_AT_NODE`, `FSM_OBSTACLE_DETECTED`) to inspect memory and register values at different stages of execution.
+
+6.  **Run Simulation:** Observe the robot's simulated behavior and memory changes.
+
+## Code Structure (High-Level)
+
+The C code is organized into logical sections:
+
+* **Global Definitions and Memory Map:** Defines all constants, memory addresses, and variable access macros.
+
+* **Utility Functions:** Helper functions for hardware interaction (switches, delays, sensors) and basic robot movements.
+
+* **Motor Control Functions:** Specific functions to control robot turns and forward movement.
+
+* **Graph and Pathfinding (BFS):** Contains the `initial_graph_data`, `init_graph`, `bfs`, and `store_path` functions.
+
+* **Command Encoding and Decoding:** Functions to convert high-level path segments into low-level 2-bit commands and vice-versa.
+
+* **Instruction Generation:** The `encode_path_to_instructions` function, which translates the BFS path into the sequence of commands the robot will execute, incorporating conceptual re-orientation.
+
+* **Robot FSM (Finite State Machine):** The `run_robot_fsm` function, which is the main control loop, managing state transitions and orchestrating all robot actions.
+
+* **Main Function:** Entry point of the program.
+
+## Detailed Documentation
+
+For an in-depth explanation of the algorithms, detailed memory layout, specific optimization techniques, and step-by-step walkthroughs of the robot's behavior, please refer to the accompanying **[Project Report.pdf]** (or whatever your report file is named).
+</immersive>
