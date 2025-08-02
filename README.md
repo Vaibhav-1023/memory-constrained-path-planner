@@ -20,15 +20,15 @@ The primary goal of this project is to demonstrate a memory-efficient and reliab
 
 * **Dynamic Obstacle Avoidance:**
 
-    * **Real-time Detection:** An additional IR sensor (`OBSTACLE_SENSOR_BASE`) continuously monitors for objects in the robot's immediate path.
+  * **Real-time Detection:** An additional IR sensor (`OBSTACLE_SENSOR_BASE`) continuously monitors for objects in the robot's immediate path.
 
-    * **Immediate Reaction:** Upon obstacle detection, the robot immediately stops.
+  * **Immediate Reaction:** Upon obstacle detection, the robot immediately stops.
 
-    * **Intelligent Backtracking:** The robot automatically backs up one full grid unit to clear the obstacle.
+  * **Intelligent Backtracking:** The robot automatically backs up one full grid unit to clear the obstacle.
 
-    * **Adaptive Re-planning:** The system identifies the specific edge that was blocked and dynamically re-runs the BFS algorithm. The BFS is modified to *exclude* this blocked edge from its search, forcing the calculation of an alternative optimal path.
+  * **Adaptive Re-planning:** The system identifies the specific edge that was blocked and dynamically re-runs the BFS algorithm. The BFS is modified to *exclude* this blocked edge from its search, forcing the calculation of an alternative optimal path.
 
-    * **Seamless Resumption:** The robot then resumes navigation on the newly computed optimal path, effectively bypassing the obstacle.
+  * **Seamless Resumption:** The robot then resumes navigation on the newly computed optimal path, effectively bypassing the obstacle.
 
 * **Conceptual Path Re-orientation:** A unique logic within the `encode_path_to_instructions` function intelligently adjusts the robot's internal "belief" about its orientation at certain nodes (e.g., where the physical track implies a bend not captured by simple grid connections). This re-orientation is purely conceptual (updates an internal variable) and **does not encode an additional physical turn command**, ensuring subsequent turns are calculated correctly from the robot's desired conceptual facing.
 
@@ -152,29 +152,35 @@ The system employs a custom memory-mapped architecture to optimize RAM usage, a 
 
 The following table details the RAM allocation for each major data structure and variable:
 
-| Variable/Structure | Base Address (Example) | Size (Bytes) | Purpose                                                                 | Overlaps With (if applicable) |
-| :----------------- | :--------------------- | :----------- | :---------------------------------------------------------------------- | :---------------------------- |
-| `arr`              | `0x00011900`           | 128          | Adjacency list for graph connections (`uint8_t[NODES][DIRS]`)           | None                          |
-| `visited`          | `0x00011980`           | 4            | BFS visited node bitmask (`uint32_t`)                                   | `executed_path_idx`, `blocked_from_node`, `blocked_to_node` |
-| `parent`           | `0x00011984`           | 32           | BFS parent array for path reconstruction (`uint8_t[NODES]`)             | `executed_path`               |
-| `queue`            | `0x000119A4`           | 32           | BFS queue data (`uint8_t[NODES]`)                                       | `path`                        |
-| `path`             | `0x000119A4`           | 32           | Computed node path (`uint8_t[NODES]`)                                   | `queue`                       |
-| `rear`             | `0x000119C4`           | 1            | Queue rear pointer (`uint8_t`)                                          | None                          |
-| `front`            | `0x000119C5`           | 1            | Queue front pointer (`uint8_t`)                                         | None                          |
-| `path_len`         | `0x000119C6`           | 1            | Total number of encoded commands (`uint8_t`)                            | None                          |
-| `current_cmd`      | `0x000119C7`           | 1            | Command currently being processed by FSM (`uint8_t`)                    | None                          |
-| `instr_index`      | `0x000119C8`           | 1            | Index of the next command to read (`uint8_t`)                           | None                          |
-| `robot_orientation`| `0x000119C9`           | 1            | Robot's current physical orientation (`uint8_t`)                        | None                          |
-| `start`            | `0x000119CA`           | 1            | Mission start node ID (`uint8_t`)                                       | None                          |
-| `target`           | `0x000119CB`           | 1            | Mission target node ID (`uint8_t`)                                      | None                          |
-| `commands`         | `0x000119CC`           | 16           | Encoded movement commands (`uint8_t[INSTRUCTIONS_SIZE]`)                | None                          |
-| `executed_path`    | `0x000119DC`           | 32           | History of successfully visited nodes (`uint8_t[NODES]`)                | `parent`                      |
-| `executed_path_idx`| `0x000119FC`           | 1            | Index/count for `executed_path` (`uint8_t`)                             | `visited`                     |
-| `blocked_from_node`| `0x000119FD`           | 1            | Origin node ID of the blocked edge (`uint8_t`)                          | `visited` (partially)         |
-| `blocked_to_node`  | `0x000119FE`           | 1            | Destination node ID of the blocked edge (`uint8_t`)                     | `visited` (partially)         |
-| **Total** |                        | **255** |                                                                         |                               |
+### Memory Usage Breakdown (RAM)
 
-*Note: The total RAM usage is calculated from the lowest (`0x00011900`) to the highest (`0x000119FE`) address used, ensuring all allocated space is accounted for, including any implicit padding.*
+The following table details the RAM allocation for each major data structure and variable, providing a byte-by-byte breakdown of the program's memory footprint. The memory addresses and sizes confirm the adherence to the 256-byte RAM constraint.
+
+| Variable/Structure | Base Address (Example) | Size (Bytes) | Purpose | Overlaps With | 
+ | ----- | ----- | ----- | ----- | ----- | 
+| `arr` | `0x00011900` | 128 | Adjacency list for graph connections (`uint8_t[NODES][DIRS]`) | None | 
+| `visited` | `0x00011980` | 4 | BFS visited node bitmask (`uint32_t`) | `executed_path_idx`, `blocked_from_node`, `blocked_to_node` | 
+| `parent` | `0x00011984` | 32 | BFS parent array for path reconstruction (`uint8_t[NODES]`) | `executed_path` | 
+| `queue` | `0x000119A4` | 32 | BFS queue data (`uint8_t[NODES]`) | `path` | 
+| `path` | `0x000119A4` | 32 | Computed node path (node sequence) (`uint8_t[NODES]`) | `queue` | 
+| `rear` | `0x000119C4` | 1 | Queue rear pointer for BFS (`uint8_t`) | None | 
+| `front` | `0x000119C5` | 1 | Queue front pointer for BFS (`uint8_t`) | None | 
+| `path_len` | `0x000119C6` | 1 | Total number of encoded commands (`uint8_t`) | None | 
+| `current_cmd` | `0x000119C7` | 1 | Command currently being processed by FSM (`uint8_t`) | None | 
+| `instr_index` | `0x000119C8` | 1 | Index of the next command to read (`uint8_t`) | None | 
+| `robot_orientation` | `0x000119C9` | 1 | Robot's current physical orientation (`uint8_t`) | None | 
+| `start` | `0x000119CA` | 1 | Mission start node ID (`uint8_t`) | None | 
+| `target` | `0x000119CB` | 1 | Mission target node ID (`uint8_t`) | None | 
+| `commands` | `0x000119CC` | 16 | Encoded movement commands (`uint8_t[INSTRUCTIONS_SIZE]`) | None | 
+| `executed_path` | `0x000119DC` | 9 | History of visited nodes for backtracking (`uint8_t[MAX_PATH_NODES]`) | None | 
+| `executed_path_idx` | `0x000119FC` | 1 | Index/count for `executed_path` (`uint8_t`) | `visited` (partially) | 
+| `blocked_from_node` | `0x000119FD` | 1 | Origin node ID of the blocked edge (`uint8_t`) | `visited` (partially) | 
+| `blocked_to_node` | `0x000119FE` | 1 | Destination node ID of the blocked edge (`uint8_t`) | `visited` (partially) | 
+| **Total** |  | **232** | **Total RAM Usage (bytes)** |  | 
+
+*Note: Total RAM usage is calculated from the lowest (`0x00011900`) to the highest (`0x000119FE`) address used, accounting for all allocated space.*
+
+*Note:* Total RAM usage is calculated from the lowest (`0x00011900`) *to the highest (`0x000119E7`) address used, accounting for all allocated space.*
 
 ## How to Use / Simulate
 
@@ -191,7 +197,7 @@ The following table details the RAM allocation for each major data structure and
 2.  Compile using your RISC-V GCC toolchain. Example command (adjust as needed for your specific setup):
 
     ```bash
-    riscv-none-embed-gcc -march=rv32i -mabi=ilp32 -nostdlib -o robot_navigator.elf robot_navigator.c
+    riscv-none-embed-gcc -Oz -march=rv32i -mabi=ilp32 -nostdlib -o robot_navigator.elf robot_navigator.c
     ```
 
     *(Ensure `-nostdlib` is used as you're providing your own `_start` and not linking against standard libraries.)*
@@ -212,9 +218,7 @@ The following table details the RAM allocation for each major data structure and
 
 4.  **Open Memory Viewer:** Monitor the RAM region starting from `0x00011900` to `0x000119FE` to observe variable states.
 
-5.  **Set Breakpoints:** Place breakpoints at key FSM states (e.g., `FSM_PATH_FOUND`, `FSM_REORIENT_AT_NODE`, `FSM_OBSTACLE_DETECTED`) to inspect memory and register values at different stages of execution.
-
-6.  **Run Simulation:** Observe the robot's simulated behavior and memory changes.
+5.  **Run Simulation:** Observe the robot's simulated behavior and memory changes.
 
 ## Code Structure (High-Level)
 
@@ -238,5 +242,4 @@ The C code is organized into logical sections:
 
 ## Detailed Documentation
 
-For an in-depth explanation of the algorithms, detailed memory layout, specific optimization techniques, and step-by-step walkthroughs of the robot's behavior, please refer to the accompanying **[Project Report.pdf]** (or whatever your report file is named).
-</immersive>
+For an in-depth explanation of the algorithms, detailed memory layout, specific optimization techniques, and step-by-step walkthroughs of the robot's behavior, please refer to the accompanying **[RISCV_microcontroller.pdf]**.
