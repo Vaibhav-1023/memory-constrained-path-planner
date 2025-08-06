@@ -150,10 +150,6 @@ The system employs a custom memory-mapped architecture to optimize RAM usage, a 
 
 ### Memory Usage Breakdown (RAM)
 
-The following table details the RAM allocation for each major data structure and variable:
-
-### Memory Usage Breakdown (RAM)
-
 The following table details the RAM allocation for each major data structure and variable, providing a byte-by-byte breakdown of the program's memory footprint. The memory addresses and sizes confirm the adherence to the 256-byte RAM constraint.
 
 | Variable/Structure | Base Address (Example) | Size (Bytes) | Purpose | Overlaps With | 
